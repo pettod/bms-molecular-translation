@@ -1,27 +1,50 @@
 import cv2
-from glob import glob
-import os
-import pandas as pd
-from PIL import Image
 import torch
-from torch.utils.data import Dataset, DataLoader
-from torchvision import transforms
-import random
+from torch.utils.data import Dataset
 import numpy as np
 
 
-class ImageDataset(Dataset):
-    def __init__(self, input_path, target_file_path, transform=None):
-        self.input_image_paths = np.array(sorted(glob(f"{input_path}/*/*/*/*.png")))
-        self.target_labels = pd.read_csv(target_file_path)
+class TrainDataset(Dataset):
+    def __init__(self, df, tokenizer, transform=None):
+        super().__init__()
+        self.df = df
+        self.tokenizer = tokenizer
+        self.file_paths = df["file_path"].values
+        self.labels = df["InChI_text"].values
         self.transform = transform
-
+    
     def __len__(self):
-        return len(self.input_image_paths)
-
-    def __getitem__(self, sample_index):
-        input_image = Image.open(self.input_image_paths[sample_index])
-        target_labels = self.target_labels.iloc[sample_index]
+        return len(self.df)
+    
+    def __getitem__(self, idx):
+        file_path = self.file_paths[idx]
+        image = cv2.imread(file_path)
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB).astype(np.float32)
         if self.transform:
-            input_image = self.transform(input_image)
-        return input_image, target_image
+            augmented = self.transform(image=image)
+            image = augmented["image"]
+        label = self.labels[idx]
+        label = torch.LongTensor(self.tokenizer.text_to_sequence(label))
+        label_length = len(label)
+        label_length = torch.LongTensor([label_length])
+        return image, label, label_length
+    
+
+class TestDataset(Dataset):
+    def __init__(self, df, transform=None):
+        super().__init__()
+        self.df = df
+        self.file_paths = df["file_path"].values
+        self.transform = transform
+    
+    def __len__(self):
+        return len(self.df)
+    
+    def __getitem__(self, idx):
+        file_path = self.file_paths[idx]
+        image = cv2.imread(file_path)
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB).astype(np.float32)
+        if self.transform:
+            augmented = self.transform(image=image)
+            image = augmented["image"]
+        return image

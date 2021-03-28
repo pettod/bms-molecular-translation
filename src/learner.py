@@ -3,13 +3,14 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.utils.data import DataLoader
+from torch.nn.utils.rnn import pack_padded_sequence, pad_sequence
 
 import os
 from tqdm import trange
 
 # Project files
 from src.callbacks import CsvLogger, EarlyStopping
-from src.network import Net
+from src.network import Encoder, DecoderWithAttention
 from src.utils import \
     initializeEpochMetrics, updateEpochMetrics, getProgressbarText, \
     saveLearningCurve, loadModel, getTorchDevice
@@ -17,37 +18,71 @@ from src.utils import \
 
 class Learner():
     def __init__(
-            self, train_dataset, valid_dataset, batch_size, learning_rate,
-            loss_function, patience=10, num_workers=1,
+            self, train_dataset, valid_dataset, batch_size, learning_rates,
+            loss_function, tokenizer, patience=10, num_workers=1,
             load_pretrained_weights=False, model_path=None,
             drop_last_batch=False):
+        def bms_collate(batch):
+            imgs, labels, label_lengths = [], [], []
+            for data_point in batch:
+                imgs.append(data_point[0])
+                labels.append(data_point[1])
+                label_lengths.append(data_point[2])
+            labels = pad_sequence(
+                labels, batch_first=True,
+                padding_value=tokenizer.stoi["<pad>"])
+            return (
+                torch.stack(imgs),
+                labels,
+                torch.stack(label_lengths).reshape(-1, 1)
+            )
         self.device = getTorchDevice()
         self.epoch_metrics = {}
+        self.tokenizer = tokenizer
 
         # Model, optimizer, loss function, scheduler
-        self.model = nn.DataParallel(Net()).to(self.device)
-        self.optimizer = optim.Adam(self.model.parameters(), lr=learning_rate)
-        self.loss_function = loss_function
+        self.encoder = Encoder("resnet34", pretrained=True).to(self.device)
+        self.encoder_optimizer = optim.Adam(
+            self.encoder.parameters(), lr=learning_rates[0])
         self.start_epoch, self.model_directory, validation_loss_min = \
             loadModel(
-                self.model, self.epoch_metrics, "saved_models", model_path,
-                self.optimizer, load_pretrained_weights)
+                self.encoder, self.epoch_metrics, "saved_models",
+                model_path, self.encoder_optimizer, load_pretrained_weights)
+        self.encoder_scheduler = ReduceLROnPlateau(
+            self.encoder_optimizer, "min", 0.3, patience//3, min_lr=1e-8)
+        self.decoder = DecoderWithAttention(
+            attention_dim=256,
+            embed_dim=256,
+            decoder_dim=512,
+            vocab_size=len(tokenizer),
+            dropout=0.5,
+            device=self.device
+        ).to(self.device)
+        self.decoder_optimizer = optim.Adam(
+            self.encoder.parameters(), lr=learning_rates[1])
+        self.start_epoch, self.model_directory, validation_loss_min = \
+            loadModel(
+                self.decoder, self.epoch_metrics, "saved_models",
+                model_path, self.decoder_optimizer, load_pretrained_weights)
+        self.decoder_scheduler = ReduceLROnPlateau(
+            self.decoder_optimizer, "min", 0.3, patience//3, min_lr=1e-8)
 
         # Callbacks
+        self.loss_function = loss_function
         self.csv_logger = CsvLogger(self.model_directory)
         self.early_stopping = EarlyStopping(
             self.model_directory, patience,
             validation_loss_min=validation_loss_min)
-        self.scheduler = ReduceLROnPlateau(
-            self.optimizer, "min", 0.3, patience//3, min_lr=1e-8)
 
         # Train and validation batch generators
         self.train_dataloader = DataLoader(
             train_dataset, batch_size=batch_size, shuffle=True,
-            num_workers=num_workers, drop_last=drop_last_batch)
+            num_workers=num_workers, drop_last=drop_last_batch,
+            pin_memory=True, collate_fn=bms_collate)
         self.valid_dataloader = DataLoader(
             valid_dataset, batch_size=batch_size, shuffle=False,
-            num_workers=num_workers, drop_last=drop_last_batch)
+            num_workers=num_workers, drop_last=drop_last_batch,
+            pin_memory=True)
         self.number_of_train_batches = len(self.train_dataloader)
         self.number_of_valid_batches = len(self.valid_dataloader)
 
@@ -84,7 +119,8 @@ class Learner():
             self.epoch_metrics = initializeEpochMetrics(epoch)
 
             # Run batches
-            for i, (X, y) in zip(progress_bar, self.train_dataloader):
+            for i, (images, labels, label_lengths) in zip(
+                    progress_bar, self.train_dataloader):
 
                 # Validation epoch before last batch
                 if i == self.number_of_train_batches - 1:
@@ -92,16 +128,34 @@ class Learner():
                         self.validationEpoch()
 
                 # Feed forward and backpropagation
-                X, y = X.to(self.device), y.to(self.device)
-                self.model.zero_grad()
-                output = self.model(X)
-                loss = self.loss_function(output, y)
+                images, labels, label_lengths = \
+                    images.to(self.device), labels.to(self.device), \
+                    label_lengths.to(self.device)
+                self.encoder.zero_grad()
+                self.decoder.zero_grad()
+                features = self.encoder(images)
+                predictions, caps_sorted, decode_lengths, alphas, sort_ind = \
+                    self.decoder(features, labels, label_lengths)
+                targets = caps_sorted[:, 1:]
+                predictions = pack_padded_sequence(
+                    predictions, decode_lengths, batch_first=True).data
+                targets = pack_padded_sequence(
+                    targets, decode_lengths, batch_first=True).data
+                loss = self.loss_function(predictions, targets)
                 loss.backward()
-                self.optimizer.step()
+                self.encoder_optimizer.step()
+                self.decoder_optimizer.step()
 
                 # Compute metrics
                 with torch.no_grad():
+                    predicted_sequence = torch.argmax(
+                        predictions, -1).cpu().numpy()
+                    text_prediction = self.tokenizer.predict_captions(
+                        [predicted_sequence])[0]
+                    text_target = self.tokenizer.predict_captions(
+                        [targets.cpu().numpy()])[0]
                     updateEpochMetrics(
-                        output, y, loss, i, self.epoch_metrics, "train")
+                        text_prediction, text_target, loss, i,
+                        self.epoch_metrics, "train")
                     progress_bar.display(
                         getProgressbarText(self.epoch_metrics, "Train"), 1)
