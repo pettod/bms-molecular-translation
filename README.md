@@ -1,6 +1,10 @@
 # bms-molecular-translation
 Kaggle competition
 
+## Introduction
+
+![image](https://user-images.githubusercontent.com/33998401/112753716-78adc600-8fe1-11eb-95e1-b1eb764caf6e.png)
+
 ## Installation
 
 ```bash
