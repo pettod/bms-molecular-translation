@@ -74,8 +74,9 @@ def main():
         ),
         ToTensorV2(),
     ])
-    trn_idx = folds[folds['fold'] != fold].index
-    val_idx = folds[folds['fold'] == fold].index
+    valid_fold_index = 0
+    trn_idx = folds[folds['fold'] != valid_fold_index].index
+    val_idx = folds[folds['fold'] == valid_fold_index].index
 
     train_folds = folds.loc[trn_idx].reset_index(drop=True)
     valid_folds = folds.loc[val_idx].reset_index(drop=True)

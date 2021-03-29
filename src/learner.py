@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.utils.data import DataLoader
-from torch.nn.utils.rnn import pack_padded_sequence, pad_sequence
+from torch.nn.utils.rnn import pack_padded_sequence
 
 import os
 from tqdm import trange
@@ -13,7 +13,7 @@ from src.callbacks import CsvLogger, EarlyStopping
 from src.network import Encoder, DecoderWithAttention
 from src.utils import \
     initializeEpochMetrics, updateEpochMetrics, getProgressbarText, \
-    saveLearningCurve, loadModel, getTorchDevice
+    saveLearningCurve, loadModel, getTorchDevice, bmsCollate
 
 
 class Learner():
@@ -22,20 +22,6 @@ class Learner():
             loss_function, tokenizer, patience=10, num_workers=1,
             load_pretrained_weights=False, model_path=None,
             drop_last_batch=False):
-        def bms_collate(batch):
-            imgs, labels, label_lengths = [], [], []
-            for data_point in batch:
-                imgs.append(data_point[0])
-                labels.append(data_point[1])
-                label_lengths.append(data_point[2])
-            labels = pad_sequence(
-                labels, batch_first=True,
-                padding_value=tokenizer.stoi["<pad>"])
-            return (
-                torch.stack(imgs),
-                labels,
-                torch.stack(label_lengths).reshape(-1, 1)
-            )
         self.device = getTorchDevice()
         self.epoch_metrics = {}
         self.tokenizer = tokenizer
@@ -78,11 +64,11 @@ class Learner():
         self.train_dataloader = DataLoader(
             train_dataset, batch_size=batch_size, shuffle=True,
             num_workers=num_workers, drop_last=drop_last_batch,
-            pin_memory=True, collate_fn=bms_collate)
+            pin_memory=True, collate_fn=bmsCollate)
         self.valid_dataloader = DataLoader(
             valid_dataset, batch_size=batch_size, shuffle=False,
             num_workers=num_workers, drop_last=drop_last_batch,
-            pin_memory=True)
+            pin_memory=True, collate_fn=bmsCollate)
         self.number_of_train_batches = len(self.train_dataloader)
         self.number_of_valid_batches = len(self.valid_dataloader)
 
@@ -92,20 +78,37 @@ class Learner():
         progress_bar.set_description(" Validation")
 
         # Run batches
-        for i, (X, y) in zip(progress_bar, self.valid_dataloader):
-            X, y = X.to(self.device), y.to(self.device)
-            output = self.model(X)
-            loss = self.loss_function(output, y)
+        for i, (images, labels, label_lengths) in zip(
+                progress_bar, self.valid_dataloader):
+            images, labels, label_lengths = \
+                    images.to(self.device), labels.to(self.device), \
+                    label_lengths.to(self.device)
+            features = self.encoder(images)
+            predictions, caps_sorted, decode_lengths, alphas, sort_ind = \
+                self.decoder(features, labels, label_lengths)
+            targets = caps_sorted[:, 1:]
+            predictions = pack_padded_sequence(
+                predictions, decode_lengths, batch_first=True).data
+            targets = pack_padded_sequence(
+                targets, decode_lengths, batch_first=True).data
+            loss = self.loss_function(predictions, targets)
+            predicted_sequence = torch.argmax(
+                predictions, -1).cpu().numpy()
+            text_prediction = self.tokenizer.predict_captions(
+                [predicted_sequence])[0]
+            text_target = self.tokenizer.predict_captions(
+                [targets.cpu().numpy()])[0]
             updateEpochMetrics(
-                output, y, loss, i, self.epoch_metrics, "valid",
-                self.optimizer)
+                text_prediction, text_target, loss, i,
+                self.epoch_metrics, "valid", self.encoder_optimizer)
 
         # Logging
         print("\n{}".format(getProgressbarText(self.epoch_metrics, "Valid")))
         self.csv_logger.__call__(self.epoch_metrics)
         self.early_stopping.__call__(
-            self.epoch_metrics, self.model, self.optimizer)
-        self.scheduler.step(self.epoch_metrics["valid_loss"])
+            self.epoch_metrics, self.encoder, self.encoder_optimizer)
+        self.encoder_scheduler.step(self.epoch_metrics["valid_loss"])
+        self.decoder_scheduler.step(self.epoch_metrics["valid_loss"])
         saveLearningCurve(model_directory=self.model_directory)
 
     def train(self):

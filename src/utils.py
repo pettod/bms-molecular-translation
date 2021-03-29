@@ -9,6 +9,7 @@ import time
 import torch
 import torch.nn as nn
 from math import ceil
+from torch.nn.utils.rnn import pad_sequence
 
 # Project files
 import src.metrics as metrics
@@ -183,3 +184,17 @@ def loadModel(
         print("Loaded model: {}".format(model_name))
 
     return start_epoch, model_directory, validation_loss_min
+
+
+def bmsCollate(batch):
+    imgs, labels, label_lengths = [], [], []
+    for data_point in batch:
+        imgs.append(data_point[0])
+        labels.append(data_point[1])
+        label_lengths.append(data_point[2])
+    labels = pad_sequence(labels, batch_first=True, padding_value=192)
+    return (
+        torch.stack(imgs),
+        labels,
+        torch.stack(label_lengths).reshape(-1, 1)
+    )

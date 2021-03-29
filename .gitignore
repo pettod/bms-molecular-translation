@@ -2,3 +2,5 @@
 *.vscode/*
 *.pth
 *.pkl
+*.csv
+*.pt
