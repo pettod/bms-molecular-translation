@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.optim.lr_scheduler import ReduceLROnPlateau
+from torch.optim.lr_scheduler import ReduceLROnPlateau, CosineAnnealingLR
 from torch.utils.data import DataLoader
 from torch.nn.utils.rnn import pack_padded_sequence
 
@@ -34,8 +34,8 @@ class Learner():
             loadModel(
                 self.encoder, self.epoch_metrics, "saved_models",
                 model_path, self.encoder_optimizer, load_pretrained_weights)
-        self.encoder_scheduler = ReduceLROnPlateau(
-            self.encoder_optimizer, "min", 0.3, patience//3, min_lr=1e-8)
+        self.encoder_scheduler = CosineAnnealingLR(
+            self.encoder_optimizer, T_max=4, eta_min=1e-6, last_epoch=-1)
         self.decoder = DecoderWithAttention(
             attention_dim=256,
             embed_dim=256,
@@ -45,13 +45,13 @@ class Learner():
             device=self.device
         ).to(self.device)
         self.decoder_optimizer = optim.Adam(
-            self.encoder.parameters(), lr=learning_rates[1])
+            self.decoder.parameters(), lr=learning_rates[1], weight_decay=1e-6)
         self.start_epoch, self.model_directory, validation_loss_min = \
             loadModel(
                 self.decoder, self.epoch_metrics, "saved_models",
                 model_path, self.decoder_optimizer, load_pretrained_weights)
-        self.decoder_scheduler = ReduceLROnPlateau(
-            self.decoder_optimizer, "min", 0.3, patience//3, min_lr=1e-8)
+        self.decoder_scheduler = CosineAnnealingLR(
+            self.decoder_optimizer, T_max=4, eta_min=1e-6, last_epoch=-1)
 
         # Callbacks
         self.loss_function = loss_function
