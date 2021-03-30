@@ -12,14 +12,8 @@ from math import ceil
 from torch.nn.utils.rnn import pad_sequence
 
 # Project files
+from config import CONFIG
 import src.metrics as metrics
-
-
-def getTorchDevice():
-    # Device (CPU / CUDA)
-    if not torch.cuda.is_available():
-        print("WARNING: Running on CPU\n\n\n\n")
-    return torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 def getMetrics():
@@ -141,10 +135,13 @@ def saveLearningCurve(
 
 
 def loadModel(
-        model, epoch_metrics, model_root="saved_models", model_path=None,
-        optimizer=None, load_pretrained_weights=True):
-    print("{:,} model parameters".format(
-        sum(p.numel() for p in model.parameters() if p.requires_grad)))
+        model, epoch_metrics, model_path=None, optimizer=None,
+        load_pretrained_weights=True, model_root="saved_models"):
+    if type(model) != list:
+        model = [model]
+    for i in range(len(model)):
+        print("{:,} model parameters".format(
+            sum(p.numel() for p in model[i].parameters() if p.requires_grad)))
     validation_loss_min = np.Inf
     start_epoch = 1
     model_directory = os.path.join(
@@ -171,19 +168,49 @@ def loadModel(
 
         model_directory = os.path.join(*model_name.split('/')[:-1])
         checkpoint = torch.load(model_name)
-        model.load_state_dict(checkpoint["model_state_dict"])
-        model.eval()
+        for i in range(len(model)):
+            model[i].load_state_dict(checkpoint[f"model_{i}"])
+            model[i].eval()
         if optimizer:
-            optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+            if type(optimizer) != list:
+                optimizer = [optimizer]
+            for i in range(len(optimizer)):
+                optimizer[i].load_state_dict(checkpoint[f"optimizer_{i}"])
         validation_loss_min = checkpoint["valid_loss"]
         log_files = glob.glob(os.path.join(model_directory, "*.csv"))
         if len(log_files):
             start_epoch = int(pd.read_csv(
                 log_files[0])["epoch"].to_list()[-1]) + 1
-
         print("Loaded model: {}".format(model_name))
 
     return start_epoch, model_directory, validation_loss_min
+
+
+def getDataloader(dataset, shuffle=True):
+    return torch.utils.data.DataLoader(
+        dataset, batch_size=CONFIG.BATCH_SIZE, shuffle=shuffle,
+        num_workers=CONFIG.NUMBER_OF_DATALOADER_WORKERS,
+        drop_last=CONFIG.DROP_LAST_BATCH, pin_memory=True,
+        collate_fn=bmsCollate)
+
+
+def getIterations(data_loader):
+    if CONFIG.ITERATIONS_PER_EPOCH > 1:
+        return min(len(data_loader), CONFIG.ITERATIONS_PER_EPOCH)
+    elif CONFIG.ITERATIONS_PER_EPOCH == 1:
+        return len(data_loader)
+    else:
+        return int(len(data_loader) * CONFIG.ITERATIONS_PER_EPOCH)
+
+
+def toDevice(batch):
+    if type(batch) == tuple:
+        batch = tuple([sample.to(CONFIG.DEVICE) for sample in batch])
+    elif type(batch) == list:
+        batch = [sample.to(CONFIG.DEVICE) for sample in batch]
+    else:
+        batch = batch.to(CONFIG.DEVICE)
+    return batch
 
 
 def bmsCollate(batch):
@@ -192,7 +219,8 @@ def bmsCollate(batch):
         imgs.append(data_point[0])
         labels.append(data_point[1])
         label_lengths.append(data_point[2])
-    labels = pad_sequence(labels, batch_first=True, padding_value=192)
+    labels = pad_sequence(
+        labels, batch_first=True, padding_value=CONFIG.TOKENIZER.stoi["<pad>"])
     return (
         torch.stack(imgs),
         labels,
