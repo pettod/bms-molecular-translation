@@ -26,7 +26,7 @@ python preprocess_data.py
 Then you can train and test:
 
 ```bash
-python train.py
+python train.py <experiment_name>
 ```
 
 ```bash
