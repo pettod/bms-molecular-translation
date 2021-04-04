@@ -1,10 +1,9 @@
-from torchvision import transforms
-from albumentations import (
-    Compose, OneOf, Normalize, Resize, RandomResizedCrop, RandomCrop,
-    HorizontalFlip, VerticalFlip, RandomBrightness, RandomContrast,
-    RandomBrightnessContrast, Rotate, ShiftScaleRotate, Cutout, 
-    IAAAdditiveGaussianNoise, Transpose, Blur
-)
+from albumentations import (Blur, Compose, Cutout, HorizontalFlip,
+                            IAAAdditiveGaussianNoise, Normalize, OneOf,
+                            RandomBrightness, RandomBrightnessContrast,
+                            RandomContrast, RandomCrop, RandomResizedCrop,
+                            Resize, Rotate, ShiftScaleRotate, Transpose,
+                            VerticalFlip)
 from albumentations.pytorch import ToTensorV2
 
 # Project files

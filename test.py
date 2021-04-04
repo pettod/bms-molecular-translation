@@ -1,69 +1,75 @@
-import cv2
-import numpy as np
+
 import os
-import time
+
+import numpy as np
+import pandas as pd
 import torch
-import torch.nn as nn
-from torchvision import transforms
+from albumentations import (Blur, Compose, Cutout, HorizontalFlip,
+                            IAAAdditiveGaussianNoise, Normalize, OneOf,
+                            RandomBrightness, RandomBrightnessContrast,
+                            RandomContrast, RandomCrop, RandomResizedCrop,
+                            Resize, Rotate, ShiftScaleRotate, Transpose,
+                            VerticalFlip)
+from albumentations.pytorch import ToTensorV2
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-# Project files
-from src.dataset import ImageDataset
-from src.network import Net
+from config import CONFIG
+from src.dataset import TestDataset as Dataset
 from src.utils import loadModel
 
-# Data paths
-DATA_ROOT = os.path.realpath("../../REDS")
-VALID_X_DIR = os.path.join(DATA_ROOT, "val_blur/")
-VALID_Y_DIR = os.path.join(DATA_ROOT, "val_sharp/")
 
-# Model parameters
-MODEL_PATH = None
-BATCH_SIZE = 4
-PATCH_SIZE = 256
-NUMBER_OF_DATALOADER_WORKERS = 8
+# Data paths
+DATA_ROOT = os.path.realpath("../input/bms-molecular-translation")
+TEST_X_DIR = os.path.join(DATA_ROOT, "test")
+MODEL_PATH = "saved_models/2021-04-03_194258/model.pt"
+TOKENIZER_PATH = "tokenizer.pth"
+SAMPLE_SUBMISSION_PATH = os.path.join(DATA_ROOT, "sample_submission.csv")
+BATCH_SIZE = 64
+PATCH_SIZE = 224
+NUMBER_OF_DATALOADER_WORKERS = 16
+
+
+def getTestFilePath(image_id):
+    return "{}/{}/{}/{}/{}.png".format(
+        TEST_X_DIR, image_id[0], image_id[1], image_id[2], image_id
+    )
 
 
 def main():
-    # Dataset
-    valid_transforms = transforms.Compose([
-        transforms.CenterCrop(PATCH_SIZE),
-        transforms.ToTensor(),
-        transforms.Normalize(
-            mean=[0.5, 0.5, 0.5],
-            std=[0.5, 0.5, 0.5]),
+    test = pd.read_csv(SAMPLE_SUBMISSION_PATH)
+    test["file_path"] = test["image_id"].apply(getTestFilePath)
+    tokenizer = torch.load(TOKENIZER_PATH)
+    transforms = Compose([
+        Resize(PATCH_SIZE, PATCH_SIZE),
+        Normalize(
+            mean=[0.485, 0.456, 0.406],
+            std=[0.229, 0.224, 0.225],
+        ),
+        ToTensorV2(),
     ])
-    valid_dataset = ImageDataset(VALID_X_DIR, VALID_Y_DIR, valid_transforms)
-    valid_dataloader = DataLoader(
-        valid_dataset, batch_size=BATCH_SIZE, shuffle=True,
+    test_dataset = Dataset(test, transforms)
+    test_dataloader = DataLoader(
+        test_dataset, batch_size=BATCH_SIZE, shuffle=False,
         num_workers=NUMBER_OF_DATALOADER_WORKERS)
-
-    # Device (CPU / CUDA)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    if not torch.cuda.is_available():
-        print("WARNING: Running on CPU")
-
-    # Save directory
-    save_directory = os.path.join(
-        "predictions", time.strftime("%Y-%m-%d_%H%M%S"))
-    if not os.path.isdir(save_directory):
-        os.makedirs(save_directory)
 
     # Predict and save
     with torch.no_grad():
-        model = nn.DataParallel(Net()).to(device)
-        loadModel(model, "saved_models", MODEL_PATH)
-        for i, (X, y) in enumerate(tqdm(valid_dataloader)):
-            X, y = X.to(device), y.numpy()
-            output = model(X).cpu().numpy()
-            X = X.cpu().numpy()
-            for j in range(X.shape[0]):
-                concat_image = np.moveaxis(np.concatenate(
-                    [X[j], output[j], y[j]], axis=-1), 0, -1) * 255
-                cv2.imwrite(os.path.join(
-                    save_directory, f"{i}_{j}.png"), cv2.cvtColor(
-                        concat_image.astype(np.uint8), cv2.COLOR_RGB2BGR))
+        encoder = CONFIG.ENCODER.to(CONFIG.DEVICE)
+        decoder = CONFIG.DECODER.to(CONFIG.DEVICE)
+        loadModel([encoder, decoder], "saved_models", MODEL_PATH)
+        text_preds = []
+        for i, images in enumerate(tqdm(test_dataloader)):
+            images = images.to(CONFIG.DEVICE)
+            features = encoder(images)
+            predictions = decoder.predict(features, 275, tokenizer)
+            predicted_sequence = torch.argmax(predictions.cpu(), -1).numpy()
+            _text_preds = tokenizer.predict_captions(predicted_sequence)
+            text_preds.append(_text_preds)
+        text_preds = np.concatenate(text_preds)
+        test["InChI"] = [f"InChI=1S/{text}" for text in predictions]
+        test[["image_id", "InChI"]].to_csv("submission.csv", index=False)
+        test[["image_id", "InChI"]].head()
 
 
 main()
