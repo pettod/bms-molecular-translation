@@ -13,7 +13,7 @@ DATA_ROOT = os.path.realpath("../bms-molecular-translation-data")
 
 class CONFIG:
     # Paths
-    DATA_ROOT = os.path.realpath("../bms-molecular-translation-data")
+    DATA_ROOT = os.path.realpath("../input/bms-molecular-translation")
     TRAIN_X_DIR = os.path.join(DATA_ROOT, "train")
     TRAIN_Y_FIL = os.path.join(DATA_ROOT, "train_labels.csv")
 
