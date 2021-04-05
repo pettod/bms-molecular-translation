@@ -32,3 +32,9 @@ python train.py <experiment_name>
 ```bash
 python test.py
 ```
+
+## Submit only CSV file
+
+```bash
+kaggle competitions submit -c bms-molecular-translation -f submission.csv -m "Message"
+```

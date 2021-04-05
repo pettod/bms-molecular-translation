@@ -28,3 +28,23 @@ class TrainDataset(Dataset):
         label_length = len(label)
         label_length = torch.LongTensor([label_length])
         return image, label, label_length
+
+
+class TestDataset(Dataset):
+    def __init__(self, df, transform=None):
+        super().__init__()
+        self.df = df
+        self.file_paths = df["file_path"].values
+        self.transform = transform
+
+    def __len__(self):
+        return len(self.df)
+
+    def __getitem__(self, idx):
+        file_path = self.file_paths[idx]
+        image = cv2.imread(file_path)
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB).astype(np.float32)
+        if self.transform:
+            augmented = self.transform(image=image)
+            image = augmented["image"]
+        return image
