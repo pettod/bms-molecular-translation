@@ -8,9 +8,6 @@ from src.loss_functions import costFunction as lossFunction
 from src.network import Encoder, DecoderWithAttention
 
 
-DATA_ROOT = os.path.realpath("../bms-molecular-translation-data")
-
-
 class CONFIG:
     # Paths
     DATA_ROOT = os.path.realpath("../input/bms-molecular-translation")
@@ -32,7 +29,7 @@ class CONFIG:
     PATIENCE = 10
     LEARNING_RATES = [1e-4, 4e-4]
     ITERATIONS_PER_EPOCH = 1000
-    NUMBER_OF_FOLDS = 5
+    NUMBER_OF_FOLDS = 50
 
     # Model
     TOKENIZER = torch.load("tokenizer.pth")

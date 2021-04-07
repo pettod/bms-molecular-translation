@@ -20,7 +20,7 @@ from src.utils import loadModel
 
 # Data paths
 TEST_X_DIR = os.path.join(CONFIG.DATA_ROOT, "test")
-MODEL_PATH = "saved_models/2021-04-03_194258/model.pt"
+MODEL_PATH = "saved_models/2021-04-06_212914_first_train/model.pt"
 TOKENIZER_PATH = "tokenizer.pth"
 SAMPLE_SUBMISSION_PATH = os.path.join(CONFIG.DATA_ROOT, "sample_submission.csv")
 
@@ -58,11 +58,11 @@ def main():
             images = images.to(CONFIG.DEVICE)
             features = encoder(images)
             predictions = decoder.predict(features, 275, tokenizer)
-            predicted_sequence = torch.argmax(predictions.cpu(), -1).numpy()
+            predicted_sequence = torch.argmax(predictions, -1).cpu().numpy()
             _text_preds = tokenizer.predict_captions(predicted_sequence)
             text_preds.append(_text_preds)
         text_preds = np.concatenate(text_preds)
-        test["InChI"] = [f"InChI=1S/{text}" for text in predictions]
+        test["InChI"] = [f"InChI=1S/{text}" for text in text_preds]
         test[["image_id", "InChI"]].to_csv("submission.csv", index=False)
         test[["image_id", "InChI"]].head()
 
