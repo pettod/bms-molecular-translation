@@ -5,6 +5,79 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
+class DecoderRNN(nn.Module):
+    def __init__(self, embed_size, hidden_size, vocab_size):
+        ''' Initialize the layers of this model.'''
+        super().__init__()
+    
+        # Keep track of hidden_size for initialization of hidden state
+        self.hidden_size = hidden_size
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+        self.lstm = nn.LSTM(input_size=embed_size, \
+                            hidden_size=hidden_size, # LSTM hidden units 
+                            num_layers=1, # number of LSTM layer
+                            bias=True, # use bias weights b_ih and b_hh
+                            batch_first=True,  # input & output will have batch size as 1st dimension
+                            dropout=0, # Not applying dropout 
+                            bidirectional=False, # unidirectional LSTM
+                           )
+
+        self.linear = nn.Linear(hidden_size, vocab_size)    
+    
+    def init_hidden(self, batch_size):
+        """ At the start of training, we need to initialize a hidden state;
+        there will be none because the hidden state is formed based on previously seen data.
+        So, this function defines a hidden state with all zeroes
+        The axes semantics are (num_layers, batch_size, hidden_dim)
+        """
+        return (torch.zeros((1, batch_size, self.hidden_size), device=self.device), \
+                torch.zeros((1, batch_size, self.hidden_size), device=self.device))
+               
+    def forward(self, features):
+        """ Define the feedforward behavior of the model """
+        
+        
+        # Initialize the hidden state
+        self.batch_size = features.shape[0] # features is of shape (batch_size, embed_size)
+#         print(f'batch_size: {self.batch_size}')
+        self.hidden = self.init_hidden(self.batch_size) 
+
+        lstm_out, self.hidden = self.lstm(features.unsqueeze(1), self.hidden) # lstm_out shape : (batch_size, MAX_LABEL_LEN, hidden_size)
+#         print(f'lstm_out: {lstm_out.shape}')
+#         print(f'hidden: {self.hidden[0].shape}')
+        outputs = self.linear(lstm_out) # outputs shape : (batch_size, MAX_LABEL_LEN, vocab_size)
+#         print(f'outputs: {outputs.shape}')
+        return outputs
+
+    ## Greedy search 
+    def sample(self, inputs):
+        " accepts pre-processed image tensor (inputs) and returns predicted sentence (list of tensor ids of length max_len) "
+        
+        
+        output = []
+        batch_size = inputs.shape[0] # batch_size is 1 at inference, inputs shape : (1, 1, embed_size)
+        hidden = self.init_hidden(batch_size) # Get initial hidden state of the LSTM
+    
+        while True:
+            lstm_out, hidden = self.lstm(inputs, hidden) # lstm_out shape : (1, 1, hidden_size)
+            outputs = self.linear(lstm_out)  # outputs shape : (1, 1, vocab_size)
+            outputs = outputs.squeeze(1) # outputs shape : (1, vocab_size)
+            _, max_indice = torch.max(outputs, dim=1) # predict the most likely next word, max_indice shape : (1)
+            
+            output.append(max_indice.cpu().numpy()[0].item()) # storing the word predicted
+            
+            if (max_indice == 1):
+                # We predicted the <end> word, so there is no further prediction to do
+                break
+            
+            ## Prepare to embed the last predicted word to be the new input of the lstm
+            inputs = self.word_embeddings(max_indice) # inputs shape : (1, embed_size)
+            inputs = inputs.unsqueeze(1) # inputs shape : (1, 1, embed_size)
+            
+        return output
+
+
 class Encoder(nn.Module):
     def __init__(self, model_name='resnet18', pretrained=False):
         super().__init__()

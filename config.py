@@ -5,7 +5,8 @@ from multiprocessing import cpu_count
 from torch.optim.lr_scheduler import ReduceLROnPlateau, CosineAnnealingLR
 
 from src.loss_functions import costFunction as lossFunction
-from src.network import Encoder, DecoderWithAttention
+from src.network import Encoder, DecoderWithAttention, DecoderRNN
+from vit_pytorch import ViT
 
 
 class CONFIG:
@@ -24,20 +25,31 @@ class CONFIG:
 
     # Hyperparameters
     LOSS_FUNCTION = lossFunction
-    BATCH_SIZE = 64
+    BATCH_SIZE = 32
     PATCH_SIZE = 224
     PATIENCE = 10
     LEARNING_RATES = [1e-4, 4e-4]
     ITERATIONS_PER_EPOCH = 1000
     NUMBER_OF_FOLDS = 50
 
-    # Model
+   # Model
     TOKENIZER = torch.load("tokenizer.pth")
-    ENCODER = Encoder("resnet34", pretrained=True)
+    ENCODER =  ViT(
+        image_size = 256,
+        patch_size = 32,
+        num_classes = 500,
+        dim = 512,
+        depth = 6,
+        heads = 16,
+        mlp_dim = 500,
+        dropout = 0.1,
+        emb_dropout = 0.1
+    ) # Encoder("resnet34", pretrained=True)
     ENCODER_OPTIMIZER = optim.Adam(ENCODER.parameters(), lr=LEARNING_RATES[0])
     ENCODER_SCHEDULER = CosineAnnealingLR(
         ENCODER_OPTIMIZER, T_max=4, eta_min=1e-6, last_epoch=-1)
-    DECODER = DecoderWithAttention(
+    DECODER =  DecoderWithAttention( # DecoderRNN(1024, 2048, len(TOKENIZER))
+        encoder_dim=500,
         attention_dim=256,
         embed_dim=256,
         decoder_dim=512,
